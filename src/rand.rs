@@ -93,7 +93,7 @@ impl SecureRandom for SystemRandom {
 
 impl private::Sealed for SystemRandom {}
 
-#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios", windows)))]
+#[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios", windows, target_env = "sgx")))]
 use self::urandom::fill as fill_impl;
 
 #[cfg(any(
@@ -107,6 +107,9 @@ use self::sysrand_or_urandom::fill as fill_impl;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 use self::darwin::fill as fill_impl;
+
+#[cfg(target_env = "sgx")]
+use self::rdrandom::fill as fill_impl;
 use crate::private;
 
 #[cfg(target_os = "linux")]
@@ -272,6 +275,24 @@ mod darwin {
         fn SecRandomCopyBytes(
             rnd: &'static SecRandomRef, count: c::size_t, bytes: *mut u8,
         ) -> c::int;
+    }
+}
+
+#[cfg(target_env = "sgx")]
+mod rdrandom {
+    use rdrand::RdRand;
+    use crate::error;
+    use crate::endian::LittleEndian;
+
+    pub fn fill(dest: &mut [u8]) -> Result<(), error::Unspecified> {
+        let rng = RdRand::new().map_err(|_| error::Unspecified)?;
+        for dst_chunk in dest.chunks_mut(8) {
+            let src_num = rng.try_next_u64().ok_or(error::Unspecified)?;
+            let temp = LittleEndian::from(src_num);
+            let src_chunk = temp.as_ref();
+            dst_chunk.copy_from_slice(&src_chunk[..dst_chunk.len()]);
+        }
+        Ok(())
     }
 }
 
